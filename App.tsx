@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import SplashScreen from './components/SplashScreen'; // Importa SplashScreen
 import AuthScreen from './components/AuthScreen'; // Importa AuthScreen
-import TopTabs from './components/TopTabs'; // Contenido principal (navegador de pestañas)
+import DrawerNavigator from './components/TopTabs'; // Importa el DrawerNavigator
 import { NavigationContainer } from '@react-navigation/native'; // Asegura un solo NavigationContainer
 
 export default function HomeScreen() {
@@ -36,15 +36,9 @@ export default function HomeScreen() {
     );
   }
 
-  // 3. Mostrar el contenido principal después de autenticación o si el usuario eligió ser visitante
   return (
     <NavigationContainer>
-      <View style={{ flex: 1 }}>
-        <TopTabs /> {/* Asegúrate de que TopTabs no tenga otro NavigationContainer */}
-        <View style={styles.inputContainer}>
-          {/* Puedes añadir contenido adicional aquí */}
-        </View>
-      </View>
+      <DrawerNavigator onLogout={() => setIsAuthenticated(false)} />
     </NavigationContainer>
   );
 }

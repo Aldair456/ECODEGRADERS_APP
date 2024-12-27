@@ -10,8 +10,13 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
-import * as ImagePicker from 'expo-image-picker'; // Importar expo-image-picker
+import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
+
+// Define la interfaz de las props del componente
+interface PerfilComponentProps {
+  onLogout: () => void; // Función que se llama al cerrar sesión
+}
 
 // Define la interfaz de los datos del usuario
 interface UserData {
@@ -24,9 +29,9 @@ interface UserData {
   };
 }
 
-const PerfilComponent: React.FC = () => {
+const PerfilComponent: React.FC<PerfilComponentProps> = ({ onLogout }) => {
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [profileImage, setProfileImage] = useState<string | null>(null); // Estado para la imagen de perfil
+  const [profileImage, setProfileImage] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -34,6 +39,7 @@ const PerfilComponent: React.FC = () => {
         const token = await AsyncStorage.getItem('userToken');
         if (!token) {
           Alert.alert('Error', 'No se encontró el token. Por favor, inicia sesión nuevamente.');
+          onLogout(); // Redirigir al AuthScreen si no hay token
           return;
         }
 
@@ -49,6 +55,7 @@ const PerfilComponent: React.FC = () => {
         setUserData(response.data);
       } catch (error) {
         Alert.alert('Error', 'No se pudieron obtener los datos del usuario.');
+        onLogout(); // Redirigir al AuthScreen en caso de error
       }
     };
 
@@ -59,7 +66,7 @@ const PerfilComponent: React.FC = () => {
     try {
       await AsyncStorage.removeItem('userToken');
       Alert.alert('Sesión cerrada', 'Has cerrado sesión exitosamente.');
-      console.log('Sesión cerrada');
+      onLogout(); // Redirigir al componente AuthScreen
     } catch (error) {
       console.error('Error al cerrar sesión:', error);
     }
@@ -76,12 +83,12 @@ const PerfilComponent: React.FC = () => {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [1, 1], // Relación de aspecto 1:1
+        aspect: [1, 1],
         quality: 1,
       });
 
       if (!result.canceled) {
-        setProfileImage(result.assets[0].uri); // Guardar la URI de la imagen seleccionada
+        setProfileImage(result.assets[0].uri);
       }
     } catch (error) {
       console.error('Error al seleccionar la imagen:', error);
@@ -98,12 +105,12 @@ const PerfilComponent: React.FC = () => {
 
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
-        aspect: [1, 1], // Relación de aspecto 1:1
+        aspect: [1, 1],
         quality: 1,
       });
 
       if (!result.canceled) {
-        setProfileImage(result.assets[0].uri); // Guardar la URI de la foto tomada
+        setProfileImage(result.assets[0].uri);
       }
     } catch (error) {
       console.error('Error al tomar la foto:', error);
@@ -133,7 +140,6 @@ const PerfilComponent: React.FC = () => {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {/* Encabezado del perfil */}
       <View style={styles.header}>
         <TouchableOpacity onPress={showImageOptions}>
           <Image
@@ -151,7 +157,6 @@ const PerfilComponent: React.FC = () => {
         }`}</Text>
       </View>
 
-      {/* Detalles del perfil */}
       <View style={styles.detailsContainer}>
         <View style={styles.detailRow}>
           <Ionicons name="mail-outline" size={24} color="#70B7C7" />
@@ -169,7 +174,6 @@ const PerfilComponent: React.FC = () => {
         </View>
       </View>
 
-      {/* Botón de cerrar sesión */}
       <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
         <Ionicons name="log-out-outline" size={20} color="#fff" />
         <Text style={styles.logoutText}>Cerrar sesión</Text>

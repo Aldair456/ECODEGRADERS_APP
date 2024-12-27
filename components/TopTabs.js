@@ -11,7 +11,7 @@ import PerfilComponent from './PerfilComponent'; // Importa el componente de Per
 
 const Drawer = createDrawerNavigator();
 
-export default function DrawerNavigator() {
+export default function DrawerNavigator({ onLogout }) {
   // Estado para almacenar coordenadas
   const [markerCoordinates, setMarkerCoordinates] = useState([]);
   // Estado para almacenar el rol decodificado del JWT
@@ -79,7 +79,9 @@ export default function DrawerNavigator() {
         drawerInactiveTintColor: 'gray',
       }}
     >
-      <Drawer.Screen name="Perfil" component={PerfilComponent} />
+      <Drawer.Screen name="Perfil">
+        {() => <PerfilComponent onLogout={onLogout} />}
+      </Drawer.Screen>
       <Drawer.Screen name="Conócenos" component={ComoLlegarComponent} />
       <Drawer.Screen name="Centros de Acopio" component={CentrosAcopioComponent} />
       <Drawer.Screen name="Lugares Afectados">

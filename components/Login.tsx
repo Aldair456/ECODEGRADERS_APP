@@ -43,14 +43,14 @@ const Login: React.FC<LoginProps> = ({ onNavigate, onLogin }) => {
       console.log('Respuesta del servidor:', response.data);
 
       if (response.status === 200) {
-        const { token } = response.data; // Suponiendo que el JWT se devuelve como "token"
+        const { token } = response.data;
 
         // Guardar el token en AsyncStorage
         await AsyncStorage.setItem('userToken', token);
         console.log('JWT guardado en AsyncStorage:', token);
 
         setErrorMessage(null); // Limpiar mensaje de error
-        Alert.alert('Inicio de Sesión Exitoso', 'Bienvenido a la aplicación');
+        //Alert.alert('Inicio de Sesión Exitoso', 'Bienvenido a la aplicación');
         onLogin(); // Notificar al componente principal que el login fue exitoso
       } else {
         handleErrorMessage('Correo o contraseña incorrecta');

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   TextInput,
-  Button,
   StyleSheet,
   ScrollView,
   Image,
@@ -58,6 +57,27 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
     }
 
     const result = await ImagePicker.launchCameraAsync({
+      quality: 0.8,
+      allowsEditing: false,
+      base64: false,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const uri = result.assets[0].uri;
+      const updatedImages = [...images, uri];
+      setImages(updatedImages);
+      await saveImagesToLocalStorage(updatedImages);
+    }
+  };
+
+  const handlePickImage = async () => {
+    const { status: galleryPerm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (galleryPerm !== 'granted') {
+      alert('Se requieren permisos para acceder a la galería.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
       quality: 0.8,
       allowsEditing: false,
       base64: false,
@@ -144,8 +164,9 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
           placeholderTextColor="#B0C4DE"
         />
 
-        <TouchableOpacity style={styles.locationButton} onPress={handleUseCurrentLocation}>
-          <Text style={styles.locationButtonText}>Usar Coordenadas Actuales</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={handleUseCurrentLocation}>
+          <Ionicons name="location" size={20} color="#fff" style={styles.icon} />
+          <Text style={styles.primaryButtonText}>Usar Coordenadas Actuales</Text>
         </TouchableOpacity>
 
         <Text style={styles.label}>Nivel de Contaminación</Text>
@@ -187,13 +208,20 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
           </Picker>
         </View>
 
-        <TouchableOpacity style={styles.photoButton} onPress={handleTakePhoto}>
-          <Text style={styles.photoButtonText}>Tomar Foto</Text>
-        </TouchableOpacity>
+        <View style={styles.buttonGroup}>
+          <TouchableOpacity style={styles.secondaryButton} onPress={handleTakePhoto}>
+            <Ionicons name="camera" size={20} color="#fff" style={styles.icon} />
+            <Text style={styles.secondaryButtonText}>Tomar Foto</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryButton} onPress={handlePickImage}>
+            <Ionicons name="image" size={20} color="#fff" style={styles.icon} />
+            <Text style={styles.secondaryButtonText}>Seleccionar Imagen</Text>
+          </TouchableOpacity>
+        </View>
 
         {images.length > 0 && (
           <View style={styles.imagesSection}>
-            <Text style={styles.imagesTitle}>Imágenes tomadas</Text>
+            <Text style={styles.imagesTitle}>Imágenes Seleccionadas</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {images.map((imgUri, index) => (
                 <View key={index} style={styles.imageWrapper}>
@@ -211,12 +239,14 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
         )}
 
         <TouchableOpacity style={styles.insertButton} onPress={handleInsert}>
+          <Ionicons name="checkmark-done" size={20} color="#fff" style={styles.icon} />
           <Text style={styles.insertButtonText}>Insertar</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 };
+
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
@@ -242,18 +272,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     color: '#1E90FF',
   },
-  locationButton: {
-    backgroundColor: '#1E90FF',
-    padding: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  locationButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
   label: {
     fontSize: 16,
     marginVertical: 5,
@@ -267,17 +285,39 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     backgroundColor: '#fff',
   },
-  photoButton: {
+  buttonGroup: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  primaryButton: {
     backgroundColor: '#1E90FF',
     padding: 12,
     borderRadius: 10,
     alignItems: 'center',
+    flexDirection: 'row',
     marginBottom: 20,
   },
-  photoButtonText: {
+  primaryButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  secondaryButton: {
+    backgroundColor: '#4682B4',
+    padding: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    flexDirection: 'row',
+    flex: 1,
+    marginHorizontal: 5,
+  },
+  secondaryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 8,
   },
   imagesSection: {
     marginVertical: 15,
@@ -317,12 +357,17 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     alignItems: 'center',
+    flexDirection: 'row',
     marginTop: 20,
   },
   insertButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 8,
+  },
+  icon: {
+    marginRight: 5,
   },
 });
 
