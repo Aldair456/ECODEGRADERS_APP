@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // Importa AsyncStorage
 import SplashScreen from './components/SplashScreen'; // Importa SplashScreen
 import AuthScreen from './components/AuthScreen'; // Importa AuthScreen
 import DrawerNavigator from './components/TopTabs'; // Importa el DrawerNavigator
@@ -11,14 +12,54 @@ export default function HomeScreen() {
   const [isVisitor, setIsVisitor] = useState(false); // Estado para la opción de visitante
 
   useEffect(() => {
-    // Simula una carga inicial de 3 segundos
     const loadApp = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 3000)); // Tiempo de carga
-      setIsLoading(false); // Oculta el Splash Screen
+      try {
+        // Recuperar estados persistidos de AsyncStorage
+        const authState = await AsyncStorage.getItem('isAuthenticated');
+        const visitorState = await AsyncStorage.getItem('isVisitor');
+
+        // Configurar estados según los valores almacenados
+        if (authState === 'true') {
+          setIsAuthenticated(true);
+        } else if (visitorState === 'true') {
+          setIsVisitor(true);
+        }
+      } catch (error) {
+        console.error('Error al recuperar estados persistidos:', error);
+      } finally {
+        // Ocultar el Splash Screen después de cargar
+        setTimeout(() => setIsLoading(false), 3000);
+      }
     };
 
     loadApp();
   }, []);
+
+  // Función para manejar el inicio de sesión
+  const handleLogin = async () => {
+    setIsAuthenticated(true);
+    await AsyncStorage.setItem('isAuthenticated', 'true'); // Guardar estado en AsyncStorage
+  };
+
+  // Función para manejar el registro
+  const handleRegister = async () => {
+    setIsAuthenticated(true);
+    await AsyncStorage.setItem('isAuthenticated', 'true'); // Guardar estado en AsyncStorage
+  };
+
+  // Función para manejar el acceso como visitante
+  const handleVisitor = async () => {
+    setIsVisitor(true);
+    await AsyncStorage.setItem('isVisitor', 'true'); // Guardar estado en AsyncStorage
+  };
+
+  // Función para manejar el cierre de sesión
+  const handleLogout = async () => {
+    setIsAuthenticated(false);
+    setIsVisitor(false);
+    await AsyncStorage.removeItem('isAuthenticated'); // Eliminar estado persistido
+    await AsyncStorage.removeItem('isVisitor'); // Eliminar estado persistido
+  };
 
   // 1. Mostrar el Splash Screen mientras carga la app
   if (isLoading) {
@@ -29,16 +70,17 @@ export default function HomeScreen() {
   if (!isAuthenticated && !isVisitor) {
     return (
       <AuthScreen
-        onLogin={() => setIsAuthenticated(true)} // Manejar autenticación exitosa
-        onRegister={() => setIsAuthenticated(true)} // Manejar registro exitoso
-        onVisitor={() => setIsVisitor(true)} // Manejar acceso como visitante
+        onLogin={handleLogin} // Manejar autenticación exitosa
+        onRegister={handleRegister} // Manejar registro exitoso
+        onVisitor={handleVisitor} // Manejar acceso como visitante
       />
     );
   }
 
+  // 3. Mostrar la interfaz principal si el usuario está autenticado o es visitante
   return (
     <NavigationContainer>
-      <DrawerNavigator onLogout={() => setIsAuthenticated(false)} />
+      <DrawerNavigator onLogout={handleLogout} />
     </NavigationContainer>
   );
 }

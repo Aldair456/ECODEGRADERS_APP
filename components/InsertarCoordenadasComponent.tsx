@@ -104,7 +104,7 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
     Alert.alert('Coordenadas obtenidas', 'Se completaron las coordenadas actuales.');
   };
 
-  const handleInsert = () => {
+  const handleInsert = async () => {
     const parsedLat = parseFloat(lat);
     const parsedLng = parseFloat(lng);
 
@@ -118,16 +118,32 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
       return;
     }
 
-    onInsert({
-      lat: parsedLat,
-      lng: parsedLng,
-      contaminationLevel,
-      plasticLevel,
+    const payload = {
+      latitude: parsedLat,
+      longitude: parsedLng,
+      pollution_level: contaminationLevel,
+      plastic_level: plasticLevel,
       status,
-      images,
-    });
+    };
 
-    Alert.alert('Ubicación marcada', 'Se marcó la ubicación con éxito.', [{ text: 'OK' }]);
+    try {
+      const response = await fetch('https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        Alert.alert('Éxito', 'Coordenadas enviadas correctamente.');
+      } else {
+        Alert.alert('Error', 'No se pudieron enviar las coordenadas.');
+      }
+    } catch (error) {
+      console.error('Error al enviar los datos:', error);
+      Alert.alert('Error', 'Hubo un problema al enviar los datos.');
+    }
   };
 
   const handleRemoveImage = (index: number) => {
@@ -177,7 +193,7 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
           >
             <Picker.Item label="Selecciona una opción" value="" />
             <Picker.Item label="Bajo" value="Bajo" />
-            <Picker.Item label="Medio" value="Medio" />
+            <Picker.Item label="Medio" value="medio" />
             <Picker.Item label="Alto" value="Alto" />
           </Picker>
         </View>
@@ -190,7 +206,7 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
           >
             <Picker.Item label="Selecciona una opción" value="" />
             <Picker.Item label="Bajo" value="Bajo" />
-            <Picker.Item label="Moderado" value="Moderado" />
+            <Picker.Item label="Moderado" value="medio" />
             <Picker.Item label="Alto" value="Alto" />
           </Picker>
         </View>
@@ -202,9 +218,8 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
             onValueChange={(itemValue) => setStatus(itemValue)}
           >
             <Picker.Item label="Selecciona una opción" value="" />
-            <Picker.Item label="En Progreso" value="En Progreso" />
-            <Picker.Item label="Pendiente" value="Pendiente" />
-            <Picker.Item label="Completo" value="Completo" />
+            <Picker.Item label="Activo" value="Activo" />
+            <Picker.Item label="Inactivo" value="Inactivo" />
           </Picker>
         </View>
 
