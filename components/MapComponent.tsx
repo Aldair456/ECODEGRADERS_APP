@@ -27,8 +27,6 @@ export type MarkerData = {
 // Función que mapea la respuesta de la API a nuestro tipo MarkerData
 const mapAPIToMarkers = (data: any[]): MarkerData[] => {
   return data.map((item: any) => ({
-    // Ajusta este 'id' según el campo que devuelva tu API
-    // si no hay id en la API, puedes generar uno con un random
     id: String(item.id || `${item.latitude}-${item.longitude}-${Math.random()}`),
     lat: item.latitude,
     lng: item.longitude,
@@ -42,7 +40,7 @@ const MapComponent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [location, setLocation] = useState<MarkerData>({
     id: 'default-location',
-    lat: -12.0464,  // Lima
+    lat: -12.0464, // Lima
     lng: -77.0428,
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -169,6 +167,70 @@ const MapComponent: React.FC = () => {
     // Intervalo de 5 segundos para refrescar automáticamente
     const intervalId = setInterval(fetchMarkers, 5000);
     return () => clearInterval(intervalId);
+  }, []);
+
+  /**
+   * *** NUEVO ***
+   * Efecto para abrir la conexión WebSocket y escuchar en tiempo real.
+   */
+  useEffect(() => {
+    // Abre la conexión
+    const ws = new WebSocket('wss://rjg2cih4jh.execute-api.us-east-1.amazonaws.com/dev');
+
+    ws.onopen = () => {
+      console.log('Conectado al WebSocket');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        // Verificamos que sea el evento de "added"
+        if (data.action === 'added' && data.place) {
+          const place = data.place;
+          // Mapeamos al mismo tipo MarkerData que usamos en el resto de la app
+          const newMarker: MarkerData = {
+            id: String(
+              place.place_id ||
+                `${place.latitude}-${place.longitude}-${Math.random()}`
+            ),
+            lat: place.latitude,
+            lng: place.longitude,
+            contaminationLevel: place.pollution_level,
+            plasticLevel: place.plastic_level,
+            status: place.status,
+          };
+
+          // Agregarlo a nuestro estado y sincronizar con el mapa
+          setMarkers((prevMarkers) => {
+            // Para evitar duplicados, revisa si existe ya el ID
+            const exists = prevMarkers.some((m) => m.id === newMarker.id);
+            if (!exists) {
+              // Sincronizar con el mapa
+              syncMarkersWithMap(prevMarkers, [...prevMarkers, newMarker]);
+              return [...prevMarkers, newMarker];
+            } else {
+              // Si ya existe, no hacemos nada
+              return prevMarkers;
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error al procesar el mensaje del WebSocket:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Error en WebSocket:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket cerrado');
+    };
+
+    // Limpiar al desmontar
+    return () => {
+      ws.close();
+    };
   }, []);
 
   /**
