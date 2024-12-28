@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -10,11 +10,16 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
+  AppState,          // <-- Para escuchar si la app va a background/foreground
+  AppStateStatus,
 } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { useFocusEffect } from '@react-navigation/native'; // <-- Para detectar cuando la pantalla está en foco
 
-// Estructura del marcador
+/****************************
+ * Definiciones y tipos
+ ****************************/
 export type MarkerData = {
   id: string;
   lat: number;
@@ -24,7 +29,7 @@ export type MarkerData = {
   status?: string;
 };
 
-// Función que mapea la respuesta de la API a nuestro tipo MarkerData
+// Convierte la respuesta de la API a la estructura MarkerData
 const mapAPIToMarkers = (data: any[]): MarkerData[] => {
   return data.map((item: any) => ({
     id: String(item.id || `${item.latitude}-${item.longitude}-${Math.random()}`),
@@ -36,6 +41,9 @@ const mapAPIToMarkers = (data: any[]): MarkerData[] => {
   }));
 };
 
+/****************************
+ * Componente principal
+ ****************************/
 const MapComponent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [location, setLocation] = useState<MarkerData>({
@@ -45,153 +53,104 @@ const MapComponent: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  // Estados para el modal
+  // Modal para info de un marcador
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [selectedMarker, setSelectedMarker] = useState<MarkerData | null>(null);
 
-  // Marcadores actuales en nuestro state
+  // Lista de marcadores actuales
   const [markers, setMarkers] = useState<MarkerData[]>([]);
 
-  // Referencia a la WebView para inyectar código JS
+  // Referencia al WebView para inyectar scripts
   const webViewRef = useRef<WebView | null>(null);
 
-  /**
-   * HTML base del mapa (sin marcadores).
-   * Dentro, definimos funciones para añadir/eliminar marcadores sin recargar.
-   */
-  const generateBaseHTML = (center: MarkerData) => {
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8"/>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Mapbox Map</title>
-          <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-          <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
-          <style>
-            body, html { margin:0; padding:0; height:100%; }
-            #map { position:absolute; top:0; bottom:0; width:100%; }
-          </style>
-        </head>
-        <body>
-          <div id="map"></div>
-          <script>
-            mapboxgl.accessToken = 'pk.eyJ1IjoiYWxkYWlyMjMiLCJhIjoiY20zZzAycXhrMDFkODJscTJmMDF1cThpdyJ9.ov7ycdJg0xlYWpI6DykSdg';
-            const map = new mapboxgl.Map({
-              container: 'map',
-              style: 'mapbox://styles/mapbox/streets-v11',
-              center: [${center.lng}, ${center.lat}],
-              zoom: 12
-            });
+  // Referencia al WebSocket
+  const wsRef = useRef<WebSocket | null>(null);
 
-            // Objeto para guardar la referencia de cada marcador con su ID
-            const markersMap = {};
+  // Estado de la app (foreground/background/inactive)
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
 
-            // Función para añadir un marcador.
-            function addMarker(markerString) {
-              const markerData = JSON.parse(markerString);
-              const { id, lat, lng } = markerData;
-              if (markersMap[id]) return; // Si ya existe, no lo agregamos de nuevo
+  /****************************
+   * Manejo del estado de la app
+   ****************************/
+  useEffect(() => {
+    // Listener para cambios en AppState
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
 
-              const marker = new mapboxgl.Marker({ color: 'green' })
-                .setLngLat([lng, lat])
-                .addTo(map);
+    // Limpieza
+    return () => {
+      subscription.remove();
+    };
+  }, [appState]);
 
-              // Al hacer click en el marcador, enviamos la información a React Native
-              marker.getElement().addEventListener('click', () => {
-                window.ReactNativeWebView.postMessage(JSON.stringify(markerData));
-              });
+  // Se llama cada vez que AppState cambie
+  const handleAppStateChange = (nextAppState: AppStateStatus) => {
+    // Si la app va de active -> background/inactive => cerrar WebSocket
+    if (
+      appState === 'active' &&
+      (nextAppState === 'background' || nextAppState === 'inactive')
+    ) {
+      console.log('[AppState] -> La app va a segundo plano, cerrando WebSocket...');
+      wsRef.current?.close();
+    }
 
-              markersMap[id] = marker;
-            }
+    // Si la app vuelve de background/inactive -> active => reabrir WebSocket (opcional)
+    if (
+      (appState === 'background' || appState === 'inactive') &&
+      nextAppState === 'active'
+    ) {
+      console.log('[AppState] -> La app vuelve a primer plano, reabriendo WebSocket...');
+      openWebSocket();
+    }
 
-            // Función para eliminar un marcador por ID
-            function removeMarker(id) {
-              const marker = markersMap[id];
-              if (marker) {
-                marker.remove();
-                delete markersMap[id];
-              }
-            }
-
-            // Escuchar mensajes que vienen desde React Native
-            document.addEventListener('message', (event) => {
-              try {
-                const parsed = JSON.parse(event.data);
-                if (parsed.type === 'ADD_MARKER') {
-                  addMarker(JSON.stringify(parsed.payload));
-                } else if (parsed.type === 'REMOVE_MARKER') {
-                  removeMarker(parsed.payload.id);
-                } else if (parsed.type === 'FLY_TO') {
-                  // Mover la vista a una nueva posición
-                  const { lng, lat } = parsed.payload;
-                  map.flyTo({ center: [lng, lat], zoom: 14 });
-                }
-              } catch (error) {
-                console.error('Error parsing message from React Native:', error);
-              }
-            });
-          </script>
-        </body>
-      </html>
-    `;
+    setAppState(nextAppState);
   };
 
-  /**
-   * Cargar marcadores de la API y configuramos un intervalo para refrescar.
-   */
-  useEffect(() => {
-    const fetchMarkers = async () => {
-      try {
-        const response = await fetch(
-          'https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/all'
-        );
-        const data = await response.json();
-        const newMarkers = mapAPIToMarkers(data);
+  /****************************
+   * Manejo de la pantalla en foco
+   ****************************/
+  useFocusEffect(
+    useCallback(() => {
+      // Cuando la pantalla entra en foco
+      console.log('[useFocusEffect] Pantalla en foco -> Hacemos GET y abrimos WSS si app activa');
 
-        // Sincronizar marcadores del mapa (estado anterior vs nuevos)
-        syncMarkersWithMap(markers, newMarkers);
+      // 1) Hacer GET inicial de marcadores
+      fetchMarkers();
 
-        // Actualizar el estado con la nueva lista
-        setMarkers(newMarkers);
-      } catch (error) {
-        console.error('Error fetching markers:', error);
-        Alert.alert('Error', 'No se pudieron cargar los marcadores.');
+      // 2) Si la app está activa (foreground), abrimos el WebSocket
+      if (appState === 'active') {
+        openWebSocket();
       }
+
+      // Cuando la pantalla pierde foco (o el componente se desmonta):
+      return () => {
+        console.log('[useFocusEffect] Pantalla pierde foco -> Cerrando WebSocket...');
+        wsRef.current?.close();
+      };
+    }, [appState]) // Dependemos de appState, por si cambia mientras estamos en la pantalla
+  );
+
+  /****************************
+   * Función para abrir/reabrir el WebSocket
+   ****************************/
+  const openWebSocket = () => {
+    console.log('[openWebSocket] Abriendo WebSocket...');
+    wsRef.current = new WebSocket('wss://rjg2cih4jh.execute-api.us-east-1.amazonaws.com/dev');
+
+    wsRef.current.onopen = () => {
+      console.log('WS onopen -> Conectado al WebSocket');
     };
 
-    // Primera carga
-    fetchMarkers();
-
-    // Intervalo de 5 segundos para refrescar automáticamente
-    const intervalId = setInterval(fetchMarkers, 5000);
-    return () => clearInterval(intervalId);
-  }, []);
-
-  /**
-   * *** NUEVO ***
-   * Efecto para abrir la conexión WebSocket y escuchar en tiempo real.
-   */
-  useEffect(() => {
-    // Abre la conexión
-    const ws = new WebSocket('wss://rjg2cih4jh.execute-api.us-east-1.amazonaws.com/dev');
-
-    ws.onopen = () => {
-      console.log('Conectado al WebSocket');
-    };
-
-    ws.onmessage = (event) => {
+    wsRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        // Verificamos que sea el evento de "added"
+
+        // Si es la acción "added"
         if (data.action === 'added' && data.place) {
           const place = data.place;
-          // Mapeamos al mismo tipo MarkerData que usamos en el resto de la app
           const newMarker: MarkerData = {
             id: String(
               place.place_id ||
-                `${place.latitude}-${place.longitude}-${Math.random()}`
+              `${place.latitude}-${place.longitude}-${Math.random()}`
             ),
             lat: place.latitude,
             lng: place.longitude,
@@ -200,18 +159,14 @@ const MapComponent: React.FC = () => {
             status: place.status,
           };
 
-          // Agregarlo a nuestro estado y sincronizar con el mapa
+          // Actualizar marcadores y sincronizar con el mapa
           setMarkers((prevMarkers) => {
-            // Para evitar duplicados, revisa si existe ya el ID
             const exists = prevMarkers.some((m) => m.id === newMarker.id);
             if (!exists) {
-              // Sincronizar con el mapa
               syncMarkersWithMap(prevMarkers, [...prevMarkers, newMarker]);
               return [...prevMarkers, newMarker];
-            } else {
-              // Si ya existe, no hacemos nada
-              return prevMarkers;
             }
+            return prevMarkers;
           });
         }
       } catch (error) {
@@ -219,34 +174,46 @@ const MapComponent: React.FC = () => {
       }
     };
 
-    ws.onerror = (error) => {
+    wsRef.current.onerror = (error) => {
       console.error('Error en WebSocket:', error);
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket cerrado');
+    wsRef.current.onclose = () => {
+      console.log('WS onclose -> WebSocket cerrado');
     };
+  };
 
-    // Limpiar al desmontar
-    return () => {
-      ws.close();
-    };
-  }, []);
+  /****************************
+   * Función para hacer el GET de marcadores
+   ****************************/
+  const fetchMarkers = async () => {
+    try {
+      console.log('[fetchMarkers] Obteniendo marcadores via GET...');
+      const response = await fetch(
+        'https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/all'
+      );
+      const data = await response.json();
 
-  /**
-   * Sincroniza los marcadores antiguos con los nuevos, sin redibujar todo el mapa.
-   * - Agrega los que no estaban
-   * - Elimina los que ya no están
-   */
+      const newMarkers = mapAPIToMarkers(data);
+      syncMarkersWithMap(markers, newMarkers);
+      setMarkers(newMarkers);
+    } catch (error) {
+      console.error('Error fetching markers:', error);
+      Alert.alert('Error', 'No se pudieron cargar los marcadores.');
+    }
+  };
+
+  /****************************
+   * Sincroniza los marcadores (sin redibujar el mapa completo)
+   ****************************/
   const syncMarkersWithMap = (oldMarkers: MarkerData[], newMarkers: MarkerData[]) => {
-    // IDs de los nuevos
+    // Creamos sets para saber qué IDs agregamos y cuáles quitamos
     const newSet = new Set(newMarkers.map((m) => m.id));
-    // IDs de los antiguos
     const oldSet = new Set(oldMarkers.map((m) => m.id));
 
-    // Marcadores agregados = en newMarkers y no en oldSet
+    // Marcadores que se agregan
     const addedMarkers = newMarkers.filter((m) => !oldSet.has(m.id));
-    // Marcadores eliminados = en oldMarkers y no en newSet
+    // Marcadores que se quitan
     const removedMarkers = oldMarkers.filter((m) => !newSet.has(m.id));
 
     // Agregar nuevos
@@ -278,9 +245,9 @@ const MapComponent: React.FC = () => {
     });
   };
 
-  /**
-   * Búsqueda de una dirección vía Mapbox Geocoding.
-   */
+  /****************************
+   * Búsqueda de direcciones con Mapbox
+   ****************************/
   const searchLocation = async () => {
     if (!searchQuery) {
       Alert.alert('Error', 'Por favor ingresa una dirección para buscar.');
@@ -296,14 +263,15 @@ const MapComponent: React.FC = () => {
       const data = await response.json();
       if (data.features.length > 0) {
         const [lng, lat] = data.features[0].center;
-        // Actualiza la ubicación en React
+
+        // Actualiza el estado local
         setLocation({
           id: 'searched-location',
           lat,
           lng,
         });
 
-        // Manda un mensaje a la WebView para hacer 'flyTo' en el mapa
+        // Envía un mensaje a la WebView para "volar" a esa ubicación
         const flyToScript = `
           (function() {
             var message = {
@@ -325,13 +293,13 @@ const MapComponent: React.FC = () => {
     }
   };
 
-  /**
-   * Manejar los mensajes que llegan desde la WebView (clic en el marcador, etc.)
-   */
+  /****************************
+   * Manejo de mensajes desde la WebView (click en marcador)
+   ****************************/
   const handleMessage = (event: WebViewMessageEvent) => {
     try {
       const markerData: MarkerData = JSON.parse(event.nativeEvent.data);
-      // Abrimos el modal con la información
+      // Mostramos la info del marcador en el modal
       setSelectedMarker(markerData);
       setModalVisible(true);
     } catch (error) {
@@ -340,6 +308,88 @@ const MapComponent: React.FC = () => {
     }
   };
 
+  /****************************
+   * Generar el HTML base para la WebView
+   ****************************/
+  const generateBaseHTML = (center: MarkerData) => {
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8"/>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Mapbox Map</title>
+          <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+          <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+          <style>
+            body, html { margin:0; padding:0; height:100%; }
+            #map { position:absolute; top:0; bottom:0; width:100%; }
+          </style>
+        </head>
+        <body>
+          <div id="map"></div>
+          <script>
+            mapboxgl.accessToken = 'pk.eyJ1IjoiYWxkYWlyMjMiLCJhIjoiY20zZzAycXhrMDFkODJscTJmMDF1cThpdyJ9.ov7ycdJg0xlYWpI6DykSdg';
+            const map = new mapboxgl.Map({
+              container: 'map',
+              style: 'mapbox://styles/mapbox/streets-v11',
+              center: [${center.lng}, ${center.lat}],
+              zoom: 12
+            });
+
+            // Guardar marcadores en un objeto para poder eliminarlos si es necesario
+            const markersMap = {};
+
+            function addMarker(markerString) {
+              const markerData = JSON.parse(markerString);
+              const { id, lat, lng } = markerData;
+              if (markersMap[id]) return; // Ya existe, no lo agregamos
+
+              const marker = new mapboxgl.Marker({ color: 'green' })
+                .setLngLat([lng, lat])
+                .addTo(map);
+
+              // Al hacer click en el marcador, mandamos data a React Native
+              marker.getElement().addEventListener('click', () => {
+                window.ReactNativeWebView.postMessage(JSON.stringify(markerData));
+              });
+
+              markersMap[id] = marker;
+            }
+
+            function removeMarker(id) {
+              const marker = markersMap[id];
+              if (marker) {
+                marker.remove();
+                delete markersMap[id];
+              }
+            }
+
+            // Escuchar mensajes desde React Native
+            document.addEventListener('message', (event) => {
+              try {
+                const parsed = JSON.parse(event.data);
+                if (parsed.type === 'ADD_MARKER') {
+                  addMarker(JSON.stringify(parsed.payload));
+                } else if (parsed.type === 'REMOVE_MARKER') {
+                  removeMarker(parsed.payload.id);
+                } else if (parsed.type === 'FLY_TO') {
+                  const { lng, lat } = parsed.payload;
+                  map.flyTo({ center: [lng, lat], zoom: 14 });
+                }
+              } catch (error) {
+                console.error('Error parsing message:', error);
+              }
+            });
+          </script>
+        </body>
+      </html>
+    `;
+  };
+
+  /****************************
+   * Render del componente
+   ****************************/
   return (
     <View style={styles.container}>
       {/* Barra de búsqueda */}
@@ -357,8 +407,7 @@ const MapComponent: React.FC = () => {
       {/* Indicador de carga */}
       {isLoading && <ActivityIndicator size="large" color="#007AFF" />}
 
-      {/* WebView con el HTML base.
-          Se monta solo una vez. Luego modificamos el mapa inyectando scripts (addMarker, removeMarker, flyTo). */}
+      {/* WebView con el mapa de Mapbox */}
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
@@ -367,7 +416,7 @@ const MapComponent: React.FC = () => {
         onMessage={handleMessage}
       />
 
-      {/* Modal para mostrar información del marcador */}
+      {/* Modal para mostrar información detallada del marcador */}
       <Modal
         animationType="slide"
         transparent
@@ -378,30 +427,24 @@ const MapComponent: React.FC = () => {
           <View style={styles.modalContent}>
             <ScrollView>
               <Text style={styles.modalTitle}>Información del Lugar</Text>
-
-              {/* Nivel de Contaminación */}
               <View style={styles.infoRow}>
                 <Icon name="warning" size={24} color="#FF3B30" style={styles.icon} />
                 <Text style={styles.infoText}>
                   Nivel de Contaminación: {selectedMarker?.contaminationLevel ?? 'Desconocido'}
                 </Text>
               </View>
-              {/* Nivel de Plástico */}
               <View style={styles.infoRow}>
                 <Icon name="recycling" size={24} color="#34C759" style={styles.icon} />
                 <Text style={styles.infoText}>
                   Nivel de Plástico: {selectedMarker?.plasticLevel ?? 'Desconocido'}
                 </Text>
               </View>
-              {/* Estado */}
               <View style={styles.infoRow}>
                 <Icon name="info" size={24} color="#007AFF" style={styles.icon} />
                 <Text style={styles.infoText}>
                   Estado: {selectedMarker?.status ?? 'Desconocido'}
                 </Text>
               </View>
-
-              {/* Botón para cerrar */}
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={() => setModalVisible(false)}
@@ -416,8 +459,9 @@ const MapComponent: React.FC = () => {
   );
 };
 
-export default MapComponent;
-
+/****************************
+ * Estilos
+ ****************************/
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -484,3 +528,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
+
+/****************************
+ * Exportar el componente
+ ****************************/
+export default MapComponent;
