@@ -159,7 +159,6 @@ const MapComponent: React.FC = () => {
         setMarkers(newMarkers);
       } catch (error) {
         console.error('Error fetching markers:', error);
-        Alert.alert('Error', 'No se pudieron cargar los marcadores.');
       }
     };
 

@@ -2,6 +2,7 @@
   "expo": {
     "name": "Ecodegraders",
     "slug": "mi-proyecto",
+    "jsEngine": "hermes",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -27,7 +28,7 @@
     },
     "extra": {
       "eas": {
-        "projectId": "5ab8a7b8-5099-4d46-b1a6-0519b454c3e8"
+        "projectId": "540d8b8b-d4fe-440b-b46b-728a88c69c98"
       }
     }
   }
