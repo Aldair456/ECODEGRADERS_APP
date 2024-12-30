@@ -1,3 +1,4 @@
+// InsertarCoordenadasComponent.tsx
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -10,7 +11,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
+  GestureResponderEvent,
 } from 'react-native';
+import AdvertenciaModal from './AdvertenciaModal'; // Asegúrate de ajustar la ruta según tu estructura de carpetas
+
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -18,16 +22,31 @@ import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
 
 const STORAGE_KEY = '@saved_images';
+const MODAL_FLAG_KEY = '@has_seen_advertencia';
 
-const InsertarCoordenadasComponent = ({ onInsert }) => {
-  const [lat, setLat] = useState('');
-  const [lng, setLng] = useState('');
-  const [contaminationLevel, setContaminationLevel] = useState('');
-  const [plasticLevel, setPlasticLevel] = useState('');
-  const [status, setStatus] = useState('');
+const InsertarCoordenadasComponent: React.FC = () => {
+  const [lat, setLat] = useState<string>('');
+  const [lng, setLng] = useState<string>('');
+  const [contaminationLevel, setContaminationLevel] = useState<string>('');
+  const [plasticLevel, setPlasticLevel] = useState<string>('');
+  const [status, setStatus] = useState<string>('');
   const [images, setImages] = useState<string[]>([]);
+  const [isModalVisible, setIsModalVisible] = useState<boolean>(false); // Estado para el modal
 
   useEffect(() => {
+    const checkModalStatus = async () => {
+      try {
+        const hasSeenModal = await AsyncStorage.getItem(MODAL_FLAG_KEY);
+        if (hasSeenModal !== 'true') {
+          setIsModalVisible(true);
+        }
+      } catch (error) {
+        console.log('Error al verificar el estado del modal:', error);
+        setIsModalVisible(true);
+      }
+    };
+    checkModalStatus();
+
     const loadImages = async () => {
       try {
         const storedImages = await AsyncStorage.getItem(STORAGE_KEY);
@@ -137,6 +156,8 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
 
       if (response.ok) {
         Alert.alert('Éxito', 'Coordenadas enviadas correctamente.');
+        // Opcional: Resetear formulario después de un envío exitoso
+        resetForm();
       } else {
         Alert.alert('Error', 'No se pudieron enviar las coordenadas.');
       }
@@ -152,112 +173,140 @@ const InsertarCoordenadasComponent = ({ onInsert }) => {
     saveImagesToLocalStorage(updatedImages);
   };
 
+  const handleAcknowledge = async (event: GestureResponderEvent) => {
+    setIsModalVisible(false);
+    try {
+      await AsyncStorage.setItem(MODAL_FLAG_KEY, 'true');
+    } catch (error) {
+      console.log('Error al guardar el estado del modal:', error);
+    }
+  };
+
+  const resetForm = () => {
+    setLat('');
+    setLng('');
+    setContaminationLevel('');
+    setPlasticLevel('');
+    setStatus('');
+    setImages([]);
+    AsyncStorage.removeItem(STORAGE_KEY).catch(error => console.log('Error al resetear imágenes:', error));
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.header}>Registrar Coordenadas</Text>
+      {/* Renderizar el modal de advertencia */}
+      <AdvertenciaModal
+        visible={isModalVisible}
+        onAcknowledge={handleAcknowledge}
+      />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Latitud"
-          value={lat}
-          onChangeText={setLat}
-          keyboardType="numeric"
-          placeholderTextColor="#B0C4DE"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Longitud"
-          value={lng}
-          onChangeText={setLng}
-          keyboardType="numeric"
-          placeholderTextColor="#B0C4DE"
-        />
+      {/* Solo mostrar el formulario si el modal no está visible */}
+      {!isModalVisible && (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.header}>Registrar Coordenadas</Text>
 
-        <TouchableOpacity style={styles.primaryButton} onPress={handleUseCurrentLocation}>
-          <Ionicons name="location" size={20} color="#fff" style={styles.icon} />
-          <Text style={styles.primaryButtonText}>Usar Coordenadas Actuales</Text>
-        </TouchableOpacity>
+          <TextInput
+            style={styles.input}
+            placeholder="Latitud"
+            value={lat}
+            onChangeText={setLat}
+            keyboardType="numeric"
+            placeholderTextColor="#B0C4DE"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Longitud"
+            value={lng}
+            onChangeText={setLng}
+            keyboardType="numeric"
+            placeholderTextColor="#B0C4DE"
+          />
 
-        <Text style={styles.label}>Nivel de Contaminación</Text>
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={contaminationLevel}
-            onValueChange={(itemValue) => setContaminationLevel(itemValue)}
-          >
-            <Picker.Item label="Selecciona una opción" value="" />
-            <Picker.Item label="Bajo" value="Bajo" />
-            <Picker.Item label="Medio" value="medio" />
-            <Picker.Item label="Alto" value="Alto" />
-          </Picker>
-        </View>
-
-        <Text style={styles.label}>Nivel de Plástico</Text>
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={plasticLevel}
-            onValueChange={(itemValue) => setPlasticLevel(itemValue)}
-          >
-            <Picker.Item label="Selecciona una opción" value="" />
-            <Picker.Item label="Bajo" value="Bajo" />
-            <Picker.Item label="Moderado" value="medio" />
-            <Picker.Item label="Alto" value="Alto" />
-          </Picker>
-        </View>
-
-        <Text style={styles.label}>Estado</Text>
-        <View style={styles.pickerContainer}>
-          <Picker
-            selectedValue={status}
-            onValueChange={(itemValue) => setStatus(itemValue)}
-          >
-            <Picker.Item label="Selecciona una opción" value="" />
-            <Picker.Item label="Activo" value="Activo" />
-            <Picker.Item label="Inactivo" value="Inactivo" />
-          </Picker>
-        </View>
-
-        <View style={styles.buttonGroup}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={handleTakePhoto}>
-            <Ionicons name="camera" size={20} color="#fff" style={styles.icon} />
-            <Text style={styles.secondaryButtonText}>Tomar Foto</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={handleUseCurrentLocation}>
+            <Ionicons name="location" size={20} color="#fff" style={styles.icon} />
+            <Text style={styles.primaryButtonText}>Usar Coordenadas Actuales</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.secondaryButton} onPress={handlePickImage}>
-            <Ionicons name="image" size={20} color="#fff" style={styles.icon} />
-            <Text style={styles.secondaryButtonText}>Seleccionar Imagen</Text>
-          </TouchableOpacity>
-        </View>
 
-        {images.length > 0 && (
-          <View style={styles.imagesSection}>
-            <Text style={styles.imagesTitle}>Imágenes Seleccionadas</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {images.map((imgUri, index) => (
-                <View key={index} style={styles.imageWrapper}>
-                  <Image source={{ uri: imgUri }} style={styles.image} />
-                  <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={() => handleRemoveImage(index)}
-                  >
-                    <Ionicons name="close-circle" size={24} color="#FF6347" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </ScrollView>
+          <Text style={styles.label}>Nivel de Contaminación</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={contaminationLevel}
+              onValueChange={(itemValue) => setContaminationLevel(itemValue)}
+            >
+              <Picker.Item label="Selecciona una opción" value="" />
+              <Picker.Item label="Bajo" value="Bajo" />
+              <Picker.Item label="Medio" value="medio" />
+              <Picker.Item label="Alto" value="Alto" />
+            </Picker>
           </View>
-        )}
 
-        <TouchableOpacity style={styles.insertButton} onPress={handleInsert}>
-          <Ionicons name="checkmark-done" size={20} color="#fff" style={styles.icon} />
-          <Text style={styles.insertButtonText}>Insertar</Text>
-        </TouchableOpacity>
-      </ScrollView>
+          <Text style={styles.label}>Nivel de Plástico</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={plasticLevel}
+              onValueChange={(itemValue) => setPlasticLevel(itemValue)}
+            >
+              <Picker.Item label="Selecciona una opción" value="" />
+              <Picker.Item label="Bajo" value="Bajo" />
+              <Picker.Item label="Moderado" value="medio" />
+              <Picker.Item label="Alto" value="Alto" />
+            </Picker>
+          </View>
+
+          <Text style={styles.label}>Estado</Text>
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={status}
+              onValueChange={(itemValue) => setStatus(itemValue)}
+            >
+              <Picker.Item label="Selecciona una opción" value="" />
+              <Picker.Item label="Activo" value="Activo" />
+              <Picker.Item label="Inactivo" value="Inactivo" />
+            </Picker>
+          </View>
+
+          <View style={styles.buttonGroup}>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handleTakePhoto}>
+              <Ionicons name="camera" size={20} color="#fff" style={styles.icon} />
+              <Text style={styles.secondaryButtonText}>Tomar Foto</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={handlePickImage}>
+              <Ionicons name="image" size={20} color="#fff" style={styles.icon} />
+              <Text style={styles.secondaryButtonText}>Seleccionar Imagen</Text>
+            </TouchableOpacity>
+          </View>
+
+          {images.length > 0 && (
+            <View style={styles.imagesSection}>
+              <Text style={styles.imagesTitle}>Imágenes Seleccionadas</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {images.map((imgUri, index) => (
+                  <View key={index} style={styles.imageWrapper}>
+                    <Image source={{ uri: imgUri }} style={styles.image} />
+                    <TouchableOpacity
+                      style={styles.deleteButton}
+                      onPress={() => handleRemoveImage(index)}
+                    >
+                      <Ionicons name="close-circle" size={24} color="#FF6347" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.insertButton} onPress={handleInsert}>
+            <Ionicons name="checkmark-done" size={20} color="#fff" style={styles.icon} />
+            <Text style={styles.insertButtonText}>Insertar</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
     </KeyboardAvoidingView>
   );
 };
