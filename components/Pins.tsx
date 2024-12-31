@@ -19,7 +19,6 @@ import {
 } from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-// Para usar Picker
 import { Picker } from '@react-native-picker/picker';
 
 /****************************
@@ -40,9 +39,7 @@ export type MarkerData = {
  */
 const mapAPIToMarkers = (data: any[]): MarkerData[] => {
   return data.map((item: any) => ({
-    id: String(
-      item.id || `${item.latitude}-${item.longitude}-${Math.random()}`
-    ),
+    id: String(item.place_id || `${item.latitude}-${item.longitude}-${Math.random()}`),
     lat: item.latitude,
     lng: item.longitude,
     contaminationLevel: item.pollution_level,
@@ -67,6 +64,11 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [editData, setEditData] = useState<Partial<MarkerData>>({});
+  const [mapCenter, setMapCenter] = useState<MarkerData>({
+    id: 'default-location',
+    lat: -12.0464,
+    lng: -77.0428,
+  });
 
   // Referencias
   const webViewRef = useRef<WebView | null>(null);
@@ -90,10 +92,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
         if (data.action === 'added' && data.place) {
           const place = data.place;
           const newMarker: MarkerData = {
-            id: String(
-              place.place_id ||
-                `${place.latitude}-${place.longitude}-${Math.random()}`
-            ),
+            id: String(place.place_id || `${place.latitude}-${place.longitude}-${Math.random()}`),
             lat: place.latitude,
             lng: place.longitude,
             contaminationLevel: place.pollution_level,
@@ -111,11 +110,11 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
             }
             return prev;
           });
-        } else if (data.action === 'deleted' && data.id) {
-          const deletedMarkerId = data.id;
-          // Eliminar local
+        } else if (data.action === 'deleted' && data.place && data.place.place_id) {
+          const deletedMarkerId = data.place.place_id;
+          // Eliminar localmente
           setMarkers((prevMarkers) =>
-            prevMarkers.filter((m) => m.id !== deletedMarkerId)
+            prevMarkers.filter((m) => m.place !== deletedMarkerId)
           );
           // Sincronizar en el mapa
           const removeScript = `
@@ -161,6 +160,17 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
     };
   }, [connectWebSocket, disconnectWebSocket]);
 
+  // Establecer el centro del mapa basado en la ubicación del usuario
+  useEffect(() => {
+    if (userLocation) {
+      setMapCenter({
+        id: 'user-location',
+        lat: userLocation.lat,
+        lng: userLocation.lng,
+      });
+    }
+  }, [userLocation]);
+
   /**
    * HTML base del mapa (sin marcadores).
    */
@@ -196,10 +206,10 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
             // Añadir un marcador al mapa
             function addMarker(markerString) {
               const markerData = JSON.parse(markerString);
-              const { id, lat, lng } = markerData;
+              const { id, lat, lng, status } = markerData;
               if (markersMap[id]) return;
 
-              const marker = new mapboxgl.Marker({ color: 'green' })
+              const marker = new mapboxgl.Marker({ color: status === 'active' ? 'green' : 'green' })
                 .setLngLat([lng, lat])
                 .addTo(map);
 
@@ -222,12 +232,13 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
             // Actualizar un marcador
             function updateMarker(markerString) {
               const markerData = JSON.parse(markerString);
-              const { id, lat, lng } = markerData;
+              const { id, lat, lng, status } = markerData;
               const existingMarker = markersMap[id];
               if (existingMarker) {
                 existingMarker.setLngLat([lng, lat]);
+                // Cambiar el color del marcador
                 existingMarker.getElement().style.backgroundColor =
-                  markerData.status === 'active' ? 'green' : 'red';
+                  status === 'active' ? 'green' : 'green';
               } else {
                 addMarker(markerString);
               }
@@ -284,7 +295,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
     fetchMarkers();
     const intervalId = setInterval(fetchMarkers, 5000);
     return () => clearInterval(intervalId);
-  }, [markers, syncMarkersWithMap]);
+  }, [syncMarkersWithMap, markers]);
 
   /**
    * Sincronizar marcadores antiguos con nuevos, sin redibujar el mapa.
@@ -334,7 +345,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const markerData: MarkerData = JSON.parse(event.nativeEvent.data);
-      console.log('place_id (si está disponible):', markerData.place);
+      //console.log('place_id (si está disponible):', markerData.place);
 
       setSelectedMarker(markerData);
       setModalVisible(true);
@@ -421,7 +432,6 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
       editData.status !== selectedMarker.status
     ) {
       // "Activo" => "active", "Inactivo" => "inactive"
-      // o si ya estás manejando "active"/"inactive" directamente en tus pickers, lo envías tal cual
       payload.status = editData.status;
     }
 
@@ -499,6 +509,55 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
     }));
   }, []);
 
+  /**
+   * Manejar la eliminación de un marcador
+   */
+  const handleDeleteMarker = useCallback(() => {
+    if (!selectedMarker || !selectedMarker.place) {
+      Alert.alert('Error', 'No se cuenta con place_id para este pin.');
+      return;
+    }
+
+    Alert.alert(
+      'Confirmar Eliminación',
+      '¿Estás seguro de que deseas eliminar este pin?',
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await fetch(
+                `https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/${selectedMarker.place}`,
+                {
+                  method: 'DELETE',
+                }
+              );
+
+              if (response.ok) {
+                Alert.alert('Éxito', 'Pin eliminado correctamente.');
+                // WebSocket manejará la eliminación en tiempo real
+                setModalVisible(false);
+                setSelectedMarker(null);
+              } else {
+                const result = await response.json();
+                Alert.alert('Error', result.message || 'No se pudo eliminar el pin.');
+              }
+            } catch (error) {
+              console.error('Error al eliminar el pin:', error);
+              Alert.alert('Error', 'Ocurrió un error al eliminar el pin.');
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  }, [selectedMarker]);
+
   return (
     <View style={styles.pinsContainer}>
       <WebView
@@ -508,13 +567,9 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
           html: useMemo(
             () =>
               generateBaseHTML(
-                markers[0] || {
-                  id: 'default-location',
-                  lat: -12.0464,
-                  lng: -77.0428,
-                }
+                mapCenter
               ),
-            [generateBaseHTML, markers]
+            [generateBaseHTML, mapCenter]
           ),
         }}
         style={styles.webview}
@@ -563,6 +618,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
               {/* Botones */}
               {!isEditing ? (
                 <>
+                  {/* Botón Editar Pin */}
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#FFD700' }]}
                     onPress={() => {
@@ -587,6 +643,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
                     <Text style={styles.actionButtonText}>Editar Pin</Text>
                   </TouchableOpacity>
 
+                  {/* Botón Iniciar Navegación */}
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#34C759' }]}
                     onPress={() => {
@@ -605,8 +662,18 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
                     <Text style={styles.actionButtonText}>Iniciar Navegación</Text>
                   </TouchableOpacity>
 
+                  {/* Botón Eliminar Pin */}
                   <TouchableOpacity
                     style={[styles.actionButton, { backgroundColor: '#FF3B30' }]}
+                    onPress={handleDeleteMarker}
+                  >
+                    <Icon name="delete" size={20} color="white" style={{ marginRight: 5 }} />
+                    <Text style={styles.actionButtonText}>Eliminar Pin</Text>
+                  </TouchableOpacity>
+
+                  {/* Botón Cerrar */}
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: '#8E8E93' }]}
                     onPress={() => {
                       setModalVisible(false);
                       setIsEditing(false);
@@ -638,7 +705,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
                     onChangeText={(txt) => handleEditChange('lng', txt)}
                   />
 
-                  {/* Picker para Contamination Level */}
+                  {/* Picker para Nivel de Contaminación */}
                   <Text style={{ marginTop: 10, fontWeight: 'bold' }}>Nivel de Contaminación</Text>
                   <View style={styles.pickerContainer}>
                     <Picker
@@ -652,7 +719,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
                     </Picker>
                   </View>
 
-                  {/* Picker para Plastic Level */}
+                  {/* Picker para Nivel de Plástico */}
                   <Text style={{ marginTop: 10, fontWeight: 'bold' }}>Nivel de Plástico</Text>
                   <View style={styles.pickerContainer}>
                     <Picker
@@ -666,7 +733,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
                     </Picker>
                   </View>
 
-                  {/* Picker para Status */}
+                  {/* Picker para Estado */}
                   <Text style={{ marginTop: 10, fontWeight: 'bold' }}>Estado</Text>
                   <View style={styles.pickerContainer}>
                     <Picker
