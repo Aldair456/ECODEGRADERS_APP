@@ -274,7 +274,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
   }, []);
 
   /**
-   * Cargar marcadores de la API.
+   * Cargar marcadores de la API una sola vez al montar el componente.
    */
   useEffect(() => {
     const fetchMarkers = async () => {
@@ -285,7 +285,7 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
         const data = await response.json();
         const newMarkers = mapAPIToMarkers(data);
 
-        syncMarkersWithMap(markers, newMarkers);
+        syncMarkersWithMap([], newMarkers);
         setMarkers(newMarkers);
       } catch (error) {
         console.error('Error fetching markers:', error);
@@ -293,9 +293,8 @@ const Pins: React.FC<{ userLocation: { lat: number; lng: number } | null }> = ({
     };
 
     fetchMarkers();
-    const intervalId = setInterval(fetchMarkers, 5000);
-    return () => clearInterval(intervalId);
-  }, [syncMarkersWithMap, markers]);
+    // Eliminamos el setInterval para evitar llamadas periódicas
+  }, [syncMarkersWithMap]);
 
   /**
    * Sincronizar marcadores antiguos con nuevos, sin redibujar el mapa.
