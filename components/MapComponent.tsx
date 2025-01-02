@@ -27,7 +27,7 @@ import * as Location from 'expo-location'; // Geolocalización con Expo
  * TIPOS
  ****************************/
 export type MarkerData = {
-  id: string;
+  id: string; // Ahora id es igual a place_id
   lat: number;
   lng: number;
   contaminationLevel?: string;
@@ -40,7 +40,7 @@ export type MarkerData = {
  */
 const mapAPIToMarkers = (data: any[]): MarkerData[] => {
   return data.map((item: any) => ({
-    id: String(item.id || `${item.latitude}-${item.longitude}-${Math.random()}`),
+    id: String(item.place_id), // Usar place_id como id
     lat: item.latitude,
     lng: item.longitude,
     contaminationLevel: item.pollution_level,
@@ -77,10 +77,18 @@ const MapComponent: React.FC = () => {
   // Podrías usar esto si quisieras mostrar instrucciones de navegación, etc.
   const [showInstructions, setShowInstructions] = useState<boolean>(false);
 
+  // *** Estados para edición
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editPollutionLevel, setEditPollutionLevel] = useState<string>('');
+  const [editPlasticLevel, setEditPlasticLevel] = useState<string>('');
+  const [editStatus, setEditStatus] = useState<string>('');
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
   // Referencias
   const webViewRef = useRef<WebView | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const appState = useRef<AppStateStatus>(AppState.currentState);
+  const navigationSubscription = useRef<Location.LocationSubscription | null>(null); // Referencia para la suscripción de navegación
 
   /****************************
    * FUNCIONES PARA WEBSOCKET
@@ -103,10 +111,7 @@ const MapComponent: React.FC = () => {
         if (data.action === 'added' && data.place) {
           const place = data.place;
           const newMarker: MarkerData = {
-            id: String(
-              place.place_id ||
-                `${place.latitude}-${place.longitude}-${Math.random()}`
-            ),
+            id: String(place.place_id), // Asegurarse de que id es place_id
             lat: place.latitude,
             lng: place.longitude,
             contaminationLevel: place.pollution_level,
@@ -124,6 +129,72 @@ const MapComponent: React.FC = () => {
             return prev;
           });
         }
+
+        // ** Manejo de la acción 'deleted' **
+        if (data.action === 'deleted' && data.place) {
+          const place = data.place;
+          const deletedMarkerId = String(place.place_id);
+
+          // Eliminar el marcador del estado
+          setMarkers((prev) => {
+            const updatedMarkers = prev.filter((m) => m.id !== deletedMarkerId);
+            syncMarkersWithMap(prev, updatedMarkers);
+            return updatedMarkers;
+          });
+
+          // Inyectar script para eliminar el marcador de la WebView
+          const removeScript = `
+            (function() {
+              var message = {
+                type: 'REMOVE_MARKER',
+                payload: { id: '${deletedMarkerId}' }
+              };
+              document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+            })();
+          `;
+          webViewRef.current?.injectJavaScript(removeScript);
+        }
+
+        // ** Manejo de la acción 'updated' **
+        if (data.action === 'updated' && data.place) {
+          const place = data.place;
+          const updatedMarker: MarkerData = {
+            id: String(place.place_id),
+            lat: place.latitude,
+            lng: place.longitude,
+            contaminationLevel: place.pollution_level,
+            plasticLevel: place.plastic_level,
+            status: place.status,
+          };
+
+          // Actualizar el marcador en el estado
+          setMarkers((prev) =>
+            prev.map((marker) => (marker.id === updatedMarker.id ? updatedMarker : marker))
+          );
+
+          // Sincronizar con el mapa: eliminar el marcador antiguo y añadir el actualizado
+          const removeScript = `
+            (function() {
+              var message = {
+                type: 'REMOVE_MARKER',
+                payload: { id: '${updatedMarker.id}' }
+              };
+              document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+            })();
+          `;
+          webViewRef.current?.injectJavaScript(removeScript);
+
+          const addScript = `
+            (function() {
+              var message = {
+                type: 'ADD_MARKER',
+                payload: ${JSON.stringify(updatedMarker)}
+              };
+              document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+            })();
+          `;
+          webViewRef.current?.injectJavaScript(addScript);
+        }
       } catch (error) {
         console.error('[WebSocket] Error al procesar mensaje:', error);
       }
@@ -137,7 +208,7 @@ const MapComponent: React.FC = () => {
       console.log('[WebSocket] Cerrado');
       wsRef.current = null;
     };
-  }, []);
+  }, [syncMarkersWithMap]);
 
   const disconnectWebSocket = useCallback(() => {
     if (wsRef.current) {
@@ -302,19 +373,19 @@ const MapComponent: React.FC = () => {
 
   /**
    * Cargar marcadores de la API y configuramos un intervalo para refrescar.
+   * Se ejecuta una sola vez al montar el componente.
    */
   useEffect(() => {
     const fetchMarkers = async () => {
       try {
         const response = await fetch(
-          
           'https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/all'
         );
         const data = await response.json();
         const newMarkers = mapAPIToMarkers(data);
 
         // Sincronizar marcadores del mapa (estado anterior vs nuevos)
-        syncMarkersWithMap(markers, newMarkers);
+        syncMarkersWithMap([], newMarkers); // Al montar, no hay marcadores anteriores
 
         // Actualizar el estado con la nueva lista
         setMarkers(newMarkers);
@@ -326,10 +397,11 @@ const MapComponent: React.FC = () => {
     // Primera carga
     fetchMarkers();
 
-    // Intervalo de 5 segundos para refrescar automáticamente
-    const intervalId = setInterval(fetchMarkers, 5000);
-    return () => clearInterval(intervalId);
-  }, [markers, syncMarkersWithMap]);
+    // Nota: Eliminado el intervalo para que se ejecute solo una vez al montar
+    // Si deseas mantener la actualización periódica, puedes reintroducir el intervalo
+    // const intervalId = setInterval(fetchMarkers, 5000);
+    // return () => clearInterval(intervalId);
+  }, [syncMarkersWithMap]);
 
   /**
    * Sincroniza los marcadores antiguos con los nuevos, sin redibujar todo el mapa.
@@ -435,6 +507,8 @@ const MapComponent: React.FC = () => {
       // Abrimos el modal con la información
       setSelectedMarker(markerData);
       setModalVisible(true);
+      // Resetear estado de edición
+      setIsEditing(false);
     } catch (error) {
       console.error('Error parsing marker data:', error);
       Alert.alert('Error', 'Ocurrió un error al procesar la información del marcador.');
@@ -503,8 +577,7 @@ const MapComponent: React.FC = () => {
       setShowInstructions(true);
 
       // 2) Iniciar watch para actualizar la ruta en tiempo real
-      //    (se podría guardar la suscripción en una ref para poder cancelarla luego)
-      await Location.watchPositionAsync(
+      navigationSubscription.current = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
           distanceInterval: 10, // Notificar cada 10 metros
@@ -523,8 +596,10 @@ const MapComponent: React.FC = () => {
    * Detener navegación
    */
   const stopNavigation = useCallback(() => {
-    // Aquí deberías tener una referencia a la suscripción de watchPosition para poder eliminarla
-    // Por simplicidad, no la estamos guardando en este ejemplo
+    if (navigationSubscription.current) {
+      navigationSubscription.current.remove();
+      navigationSubscription.current = null;
+    }
     setIsNavigating(false);
     setShowInstructions(false);
   }, []);
@@ -555,6 +630,221 @@ const MapComponent: React.FC = () => {
    * Memoización del HTML base para optimizar renders
    */
   const memoizedHTML = useMemo(() => generateBaseHTML(location), [generateBaseHTML, location]);
+
+  /**
+   * Función para iniciar la edición de un marcador
+   */
+  const handleEditPress = useCallback(() => {
+    if (selectedMarker) {
+      setIsEditing(true);
+      setEditPollutionLevel(selectedMarker.contaminationLevel || '');
+      setEditPlasticLevel(selectedMarker.plasticLevel || '');
+      setEditStatus(selectedMarker.status || '');
+    }
+  }, [selectedMarker]);
+
+  /**
+   * Función para cancelar la edición
+   */
+  const handleCancelEdit = useCallback(() => {
+    setIsEditing(false);
+    setEditPollutionLevel('');
+    setEditPlasticLevel('');
+    setEditStatus('');
+  }, []);
+
+  /**
+   * Función para guardar los cambios del marcador
+   */
+  const handleSavePress = useCallback(async () => {
+    if (!selectedMarker) {
+      Alert.alert('Error', 'No hay marcador seleccionado.');
+      return;
+    }
+
+    // Validar los campos si es necesario
+    if (!editPollutionLevel || !editPlasticLevel || !editStatus) {
+      Alert.alert('Error', 'Por favor, completa todos los campos.');
+      return;
+    }
+
+    // Preparar el cuerpo de la solicitud
+    const body = {
+      latitude: selectedMarker.lat,
+      longitude: selectedMarker.lng,
+      pollution_level: editPollutionLevel,
+      plastic_level: editPlasticLevel,
+      status: editStatus,
+    };
+
+    try {
+      setIsSaving(true);
+      const response = await fetch(
+        `https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/${selectedMarker.id}`, // Ahora usa place_id
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Error al actualizar el marcador.');
+      }
+
+      // Verificar si la respuesta tiene contenido
+      const text = await response.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch (parseError) {
+        console.error('Error al parsear la respuesta:', parseError);
+        throw new Error('Respuesta de la API no válida.');
+      }
+
+      if (data.message === 'Lugar actualizado correctamente.') {
+        Alert.alert('Éxito', 'El marcador se ha actualizado correctamente.');
+
+        // Actualizar el marcador en el estado
+        const updatedMarker: MarkerData = {
+          id: selectedMarker.id, // place_id
+          lat: data.data.latitude,
+          lng: data.data.longitude,
+          contaminationLevel: data.data.pollution_level,
+          plasticLevel: data.data.plastic_level,
+          status: data.data.status,
+        };
+
+        setMarkers((prevMarkers) =>
+          prevMarkers.map((marker) =>
+            marker.id === updatedMarker.id ? updatedMarker : marker
+          )
+        );
+
+        // Sincronizar con el mapa
+        const removeScript = `
+          (function() {
+            var message = {
+              type: 'REMOVE_MARKER',
+              payload: { id: '${selectedMarker.id}' }
+            };
+            document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+          })();
+        `;
+        webViewRef.current?.injectJavaScript(removeScript);
+
+        const addScript = `
+          (function() {
+            var message = {
+              type: 'ADD_MARKER',
+              payload: ${JSON.stringify(updatedMarker)}
+            };
+            document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+          })();
+        `;
+        webViewRef.current?.injectJavaScript(addScript);
+
+        // Actualizar el marcador seleccionado y salir del modo de edición
+        setSelectedMarker(updatedMarker);
+        setIsEditing(false);
+      } else {
+        throw new Error('Respuesta inesperada de la API.');
+      }
+    } catch (error) {
+      console.error('Error al actualizar el marcador:', error);
+      Alert.alert('Error', 'Ocurrió un error al actualizar el marcador.');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedMarker, editPollutionLevel, editPlasticLevel, editStatus]);
+
+  /**
+   * Función para eliminar un marcador
+   */
+  const handleDeletePress = useCallback(() => {
+    if (!selectedMarker) {
+      Alert.alert('Error', 'No hay marcador seleccionado.');
+      return;
+    }
+
+    Alert.alert(
+      'Confirmar Eliminación',
+      '¿Estás seguro de que deseas eliminar este marcador?',
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setIsSaving(true);
+              const response = await fetch(
+                `https://mzl6xsrh26.execute-api.us-east-1.amazonaws.com/dev/place/${selectedMarker.id}`, // Usa place_id
+                {
+                  method: 'DELETE',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                }
+              );
+
+              if (!response.ok) {
+                throw new Error('Error al eliminar el marcador.');
+              }
+
+              // Verificar si la respuesta tiene contenido
+              const text = await response.text();
+              let data;
+              try {
+                data = text ? JSON.parse(text) : {};
+              } catch (parseError) {
+                console.error('Error al parsear la respuesta:', parseError);
+                throw new Error('Respuesta de la API no válida.');
+              }
+
+              if (data.message === 'Lugar eliminado correctamente.') {
+                Alert.alert('Éxito', 'El marcador se ha eliminado correctamente.');
+
+                // Eliminar el marcador del estado
+                setMarkers((prevMarkers) =>
+                  prevMarkers.filter((marker) => marker.id !== selectedMarker.id)
+                );
+
+                // Sincronizar con el mapa
+                const removeScript = `
+                  (function() {
+                    var message = {
+                      type: 'REMOVE_MARKER',
+                      payload: { id: '${selectedMarker.id}' }
+                    };
+                    document.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
+                  })();
+                `;
+                webViewRef.current?.injectJavaScript(removeScript);
+
+                // Cerrar el modal
+                setModalVisible(false);
+                setSelectedMarker(null);
+              } else {
+                throw new Error('Respuesta inesperada de la API.');
+              }
+            } catch (error) {
+              console.error('Error al eliminar el marcador:', error);
+              Alert.alert('Error', 'Ocurrió un error al eliminar el marcador.');
+            } finally {
+              setIsSaving(false);
+            }
+          },
+        },
+      ],
+      { cancelable: false }
+    );
+  }, [selectedMarker]);
 
   return (
     <View style={styles.container}>
@@ -600,58 +890,141 @@ const MapComponent: React.FC = () => {
         animationType="slide"
         transparent
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={() => {
+          setModalVisible(false);
+          setIsEditing(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <ScrollView>
               <Text style={styles.modalTitle}>Información del Lugar</Text>
 
-              {/* Nivel de Contaminación */}
-              <View style={styles.infoRow}>
-                <Icon name="warning" size={24} color="#FF3B30" style={styles.icon} />
-                <Text style={styles.infoText}>
-                  Nivel de Contaminación: {selectedMarker?.contaminationLevel ?? 'Desconocido'}
-                </Text>
-              </View>
-              {/* Nivel de Plástico */}
-              <View style={styles.infoRow}>
-                <Icon name="recycling" size={24} color="#34C759" style={styles.icon} />
-                <Text style={styles.infoText}>
-                  Nivel de Plástico: {selectedMarker?.plasticLevel ?? 'Desconocido'}
-                </Text>
-              </View>
-              {/* Estado */}
-              <View style={styles.infoRow}>
-                <Icon name="info" size={24} color="#007AFF" style={styles.icon} />
-                <Text style={styles.infoText}>
-                  Estado: {selectedMarker?.status ?? 'Desconocido'}
-                </Text>
-              </View>
+              {/* Condicional para modo de edición */}
+              {!isEditing ? (
+                <>
+                  {/* Nivel de Contaminación */}
+                  <View style={styles.infoRow}>
+                    <Icon name="warning" size={24} color="#FF3B30" style={styles.icon} />
+                    <Text style={styles.infoText}>
+                      Nivel de Contaminación: {selectedMarker?.contaminationLevel ?? 'Desconocido'}
+                    </Text>
+                  </View>
+                  {/* Nivel de Plástico */}
+                  <View style={styles.infoRow}>
+                    <Icon name="recycling" size={24} color="#34C759" style={styles.icon} />
+                    <Text style={styles.infoText}>
+                      Nivel de Plástico: {selectedMarker?.plasticLevel ?? 'Desconocido'}
+                    </Text>
+                  </View>
+                  {/* Estado */}
+                  <View style={styles.infoRow}>
+                    <Icon name="info" size={24} color="#007AFF" style={styles.icon} />
+                    <Text style={styles.infoText}>
+                      Estado: {selectedMarker?.status ?? 'Desconocido'}
+                    </Text>
+                  </View>
 
-              {/* Botón para iniciar la navegación en tiempo real */}
-              <TouchableOpacity
-                style={[styles.closeButton, { backgroundColor: '#34C759' }]}
-                onPress={() => {
-                  if (!userLocation || !selectedMarker) {
-                    Alert.alert('Ubicación desconocida', 'No se pudo obtener tu ubicación.');
-                    return;
-                  }
-                  // Empezamos la navegación
-                  startNavigation(selectedMarker.lat, selectedMarker.lng);
-                  setModalVisible(false);
-                }}
-              >
-                <Text style={styles.closeButtonText}>Iniciar Navegación</Text>
-              </TouchableOpacity>
+                  {/* Botones para iniciar la navegación, editar y eliminar */}
+                  <TouchableOpacity
+                    style={[styles.closeButton, { backgroundColor: '#34C759' }]}
+                    onPress={() => {
+                      if (!userLocation || !selectedMarker) {
+                        Alert.alert('Ubicación desconocida', 'No se pudo obtener tu ubicación.');
+                        return;
+                      }
+                      // Empezamos la navegación
+                      startNavigation(selectedMarker.lat, selectedMarker.lng);
+                      setModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.closeButtonText}>Iniciar Navegación</Text>
+                  </TouchableOpacity>
 
-              {/* Botón para cerrar modal */}
-              <TouchableOpacity
-                style={styles.closeButton}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.closeButtonText}>Cerrar</Text>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.closeButton, { backgroundColor: '#FFD700' }]}
+                    onPress={handleEditPress}
+                  >
+                    <Text style={styles.closeButtonText}>Editar</Text>
+                  </TouchableOpacity>
+
+                  {/* Botón para eliminar marcador */}
+                  <TouchableOpacity
+                    style={[styles.closeButton, { backgroundColor: '#FF3B30' }]}
+                    onPress={handleDeletePress}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.closeButtonText}>Eliminar</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Botón para cerrar modal */}
+                  <TouchableOpacity
+                    style={styles.closeButton}
+                    onPress={() => {
+                      setModalVisible(false);
+                      setIsEditing(false);
+                    }}
+                  >
+                    <Text style={styles.closeButtonText}>Cerrar</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.modalSubtitle}>Editar Información</Text>
+
+                  {/* Nivel de Contaminación */}
+                  <Text style={styles.label}>Nivel de Contaminación:</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    value={editPollutionLevel}
+                    onChangeText={setEditPollutionLevel}
+                    placeholder="Ej. Bajo, Medio, Alto"
+                  />
+
+                  {/* Nivel de Plástico */}
+                  <Text style={styles.label}>Nivel de Plástico:</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    value={editPlasticLevel}
+                    onChangeText={setEditPlasticLevel}
+                    placeholder="Ej. Bajo, Medio, Alto"
+                  />
+
+                  {/* Estado */}
+                  <Text style={styles.label}>Estado:</Text>
+                  <TextInput
+                    style={styles.inputField}
+                    value={editStatus}
+                    onChangeText={setEditStatus}
+                    placeholder="Ej. Activo, Inactivo"
+                  />
+
+                  {/* Botones para guardar y cancelar */}
+                  <TouchableOpacity
+                    style={[styles.closeButton, { backgroundColor: '#34C759' }]}
+                    onPress={handleSavePress}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.closeButtonText}>Guardar</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.closeButton, { backgroundColor: '#FF3B30' }]}
+                    onPress={handleCancelEdit}
+                    disabled={isSaving}
+                  >
+                    <Text style={styles.closeButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </ScrollView>
           </View>
         </View>
@@ -721,6 +1094,12 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textAlign: 'center',
   },
+  modalSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -740,9 +1119,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     alignSelf: 'center',
     marginTop: 10,
+    width: '80%',
+    alignItems: 'center',
   },
   closeButtonText: {
     color: 'white',
     fontSize: 16,
+  },
+  label: {
+    fontSize: 14,
+    marginTop: 10,
+    color: '#555',
+  },
+  inputField: {
+    borderWidth: 1,
+    borderColor: '#ccc',
+    borderRadius: 5,
+    paddingHorizontal: 10,
+    height: 40,
+    marginTop: 5,
   },
 });
